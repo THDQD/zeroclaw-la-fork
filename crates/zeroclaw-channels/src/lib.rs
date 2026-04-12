@@ -30,6 +30,7 @@ pub mod imessage;
 pub mod irc;
 #[cfg(feature = "channel-lark")]
 pub mod lark;
+pub mod lifeatlas;
 #[cfg(feature = "channel-line")]
 pub mod line;
 #[cfg(feature = "channel-linq")]

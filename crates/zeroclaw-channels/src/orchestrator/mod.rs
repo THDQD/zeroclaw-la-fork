@@ -34,6 +34,7 @@ pub use crate::imessage::IMessageChannel;
 pub use crate::irc::IrcChannel;
 #[cfg(feature = "channel-lark")]
 pub use crate::lark::LarkChannel;
+pub use crate::lifeatlas::LifeAtlasChannel;
 #[cfg(feature = "channel-line")]
 pub use crate::line::LineChannel;
 pub use crate::linq::LinqChannel;
@@ -4931,6 +4932,18 @@ fn collect_configured_channels(
         });
     }
 
+    if let Some(ref la) = config.channels.lifeatlas {
+        if la.enabled && !la.webhook_url.is_empty() {
+            channels.push(ConfiguredChannel {
+                display_name: "LifeAtlas",
+                channel: Arc::new(LifeAtlasChannel::new(
+                    la.webhook_url.clone(),
+                    la.auth_token.clone(),
+                )),
+            });
+        }
+    }
+
     #[cfg(feature = "voice-wake")]
     if let Some(ref vw) = config.channels.voice_wake {
         channels.push(ConfiguredChannel {
@@ -5729,6 +5742,20 @@ pub async fn deliver_announcement(
             );
             zeroclaw_api::channel::Channel::send(&ch, &SendMessage::new(&safe_output, target))
                 .await?;
+        }
+        "lifeatlas" => {
+            let la = config
+                .channels
+                .lifeatlas
+                .as_ref()
+                .filter(|la| la.enabled)
+                .ok_or_else(|| anyhow::anyhow!("lifeatlas channel not configured or disabled"))?;
+            let channel = LifeAtlasChannel::new(la.webhook_url.clone(), la.auth_token.clone());
+            zeroclaw_api::channel::Channel::send(
+                &channel,
+                &SendMessage::new(&safe_output, target),
+            )
+            .await?;
         }
         other => anyhow::bail!("unsupported delivery channel: {other}"),
     }
@@ -10455,6 +10482,59 @@ This is an example JSON object for profile settings."#;
             "disabled voice-call should not be collected"
         );
     }
+
+    #[test]
+    fn collect_configured_channels_includes_lifeatlas_when_enabled_with_webhook_url() {
+        let mut config = Config::default();
+        config.channels.lifeatlas = Some(zeroclaw_config::schema::LifeAtlasChannelConfig {
+            enabled: true,
+            webhook_url: "https://proxy.example.test/zeroclaw/push".to_string(),
+            auth_token: "test-token".to_string(),
+        });
+
+        let channels = collect_configured_channels(&config, "test");
+
+        assert!(
+            channels
+                .iter()
+                .any(|entry| entry.display_name == "LifeAtlas")
+        );
+        assert!(
+            channels
+                .iter()
+                .any(|entry| entry.channel.name() == "lifeatlas")
+        );
+    }
+
+    #[tokio::test]
+    async fn deliver_announcement_posts_to_lifeatlas_webhook() {
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mut config = Config::default();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/zeroclaw/push"))
+            .and(header("authorization", "Bearer test-token"))
+            .and(body_json(serde_json::json!({
+                "content": "Time to stretch!",
+                "recipient": "session_abc",
+            })))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        config.channels.lifeatlas = Some(zeroclaw_config::schema::LifeAtlasChannelConfig {
+            enabled: true,
+            webhook_url: format!("{}/zeroclaw/push", server.uri()),
+            auth_token: "test-token".to_string(),
+        });
+
+        deliver_announcement(&config, "lifeatlas", "session_abc", "Time to stretch!")
+            .await
+            .unwrap();
+    }
+
 
     struct AlwaysFailChannel {
         name: &'static str,

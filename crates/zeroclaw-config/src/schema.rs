@@ -6553,6 +6553,9 @@ pub struct ChannelsConfig {
     /// MQTT channel configuration (SOP listener).
     #[nested]
     pub mqtt: Option<MqttConfig>,
+    /// LifeAtlas webhook push channel configuration.
+    #[nested]
+    pub lifeatlas: Option<LifeAtlasChannelConfig>,
     /// Base timeout in seconds for processing a single channel message (LLM + tools).
     /// Runtime uses this as a per-turn budget that scales with tool-loop depth
     /// (up to 4x, capped) so one slow/retried model call does not consume the
@@ -6721,6 +6724,10 @@ impl ChannelsConfig {
                 Box::new(ConfigWrapper::new(self.mqtt.as_ref())),
                 self.mqtt.is_some(),
             ),
+            (
+                Box::new(ConfigWrapper::new(self.lifeatlas.as_ref())),
+                self.lifeatlas.is_some(),
+            ),
         ]
     }
 
@@ -6779,6 +6786,7 @@ impl Default for ChannelsConfig {
             #[cfg(feature = "voice-wake")]
             voice_wake: None,
             mqtt: None,
+            lifeatlas: None,
             message_timeout_secs: default_channel_message_timeout_secs(),
             ack_reactions: true,
             show_tool_calls: false,
@@ -8593,6 +8601,34 @@ impl ChannelConfig for BlueskyConfig {
     }
     fn desc() -> &'static str {
         "AT Protocol"
+    }
+}
+
+/// LifeAtlas push channel configuration.
+///
+/// Send-only channel that HTTP POSTs proactive messages (cron, agent-initiated)
+/// to an external auth proxy webhook. Inbound messages arrive via `/ws/chat`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Configurable)]
+#[cfg_attr(feature = "schema-export", derive(schemars::JsonSchema))]
+#[prefix = "channels.lifeatlas"]
+pub struct LifeAtlasChannelConfig {
+    /// Enable the LifeAtlas push channel. Default: true.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Webhook URL to POST push messages to (e.g., http://proxy:8000/zeroclaw/push).
+    #[serde(default)]
+    pub webhook_url: String,
+    /// Bearer token for authenticating with the webhook endpoint.
+    #[serde(default)]
+    pub auth_token: String,
+}
+
+impl ChannelConfig for LifeAtlasChannelConfig {
+    fn name() -> &'static str {
+        "LifeAtlas"
+    }
+    fn desc() -> &'static str {
+        "push via webhook"
     }
 }
 
@@ -10901,6 +10937,38 @@ impl Config {
                  implemented; this section is reserved for future use and will be ignored"
             );
         }
+
+        // LifeAtlas channel overrides
+        if let Ok(val) = std::env::var("ZEROCLAW_CHANNELS_LIFEATLAS_ENABLED") {
+            let enabled = val == "1" || val.eq_ignore_ascii_case("true");
+            if enabled && self.channels.lifeatlas.is_none() {
+                self.channels.lifeatlas = Some(LifeAtlasChannelConfig {
+                    enabled: true,
+                    webhook_url: String::new(),
+                    auth_token: String::new(),
+                });
+            }
+            if let Some(ref mut la) = self.channels.lifeatlas {
+                la.enabled = enabled;
+            }
+        }
+        if let Ok(url) = std::env::var("ZEROCLAW_CHANNELS_LIFEATLAS_WEBHOOK_URL") {
+            if self.channels.lifeatlas.is_none() {
+                self.channels.lifeatlas = Some(LifeAtlasChannelConfig {
+                    enabled: true,
+                    webhook_url: String::new(),
+                    auth_token: String::new(),
+                });
+            }
+            if let Some(ref mut la) = self.channels.lifeatlas {
+                la.webhook_url = url;
+            }
+        }
+        if let Ok(token) = std::env::var("ZEROCLAW_CHANNELS_LIFEATLAS_AUTH_TOKEN") {
+            if let Some(ref mut la) = self.channels.lifeatlas {
+                la.auth_token = token;
+            }
+        }
     }
 
     async fn resolve_config_path_for_save(&self) -> Result<PathBuf> {
@@ -11718,6 +11786,7 @@ auto_save = true
                 #[cfg(feature = "voice-wake")]
                 voice_wake: None,
                 mqtt: None,
+                lifeatlas: None,
                 message_timeout_secs: 300,
                 ack_reactions: true,
                 show_tool_calls: true,
@@ -12853,6 +12922,7 @@ allowed_rooms = ["!ops:matrix.org"]
             #[cfg(feature = "voice-wake")]
             voice_wake: None,
             mqtt: None,
+            lifeatlas: None,
             message_timeout_secs: 300,
             ack_reactions: true,
             show_tool_calls: true,
@@ -13227,6 +13297,7 @@ bot_token = "xoxb-tok"
             #[cfg(feature = "voice-wake")]
             voice_wake: None,
             mqtt: None,
+            lifeatlas: None,
             message_timeout_secs: 300,
             ack_reactions: true,
             show_tool_calls: true,
