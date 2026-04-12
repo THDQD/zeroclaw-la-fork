@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1
 
 # ── Stage 0: Frontend build ─────────────────────────────────────
 FROM node:22-alpine AS web-builder
@@ -45,7 +45,7 @@ COPY Cargo.toml Cargo.lock ./
 # Cargo must compile during the dependency pre-fetch step; copy it explicitly.
 COPY --parents crates/*/Cargo.toml ./
 COPY --parents crates/aardvark-sys/build.rs ./
-# apps/tauri: .dockerignore whitelists only Cargo.toml; src is stubbed below.
+# apps/tauri: .dockerignore whitelists only Cargo.toml; src and build.rs are stubbed below.
 COPY apps/tauri/Cargo.toml apps/tauri/Cargo.toml
 # Create dummy targets for all workspace members so manifest parsing succeeds.
 RUN mkdir -p src benches apps/tauri/src \
@@ -53,6 +53,7 @@ RUN mkdir -p src benches apps/tauri/src \
     && echo "" > src/lib.rs \
     && echo "fn main() {}" > benches/agent_benchmarks.rs \
     && echo "fn main() {}" > apps/tauri/src/main.rs \
+    && echo "fn main() {}" > apps/tauri/build.rs \
     && for d in crates/*/; do mkdir -p "${d}src" && printf '' > "${d}src/lib.rs"; done
 RUN --mount=type=cache,id=zeroclaw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=zeroclaw-cargo-git,target=/usr/local/cargo/git,sharing=locked \
@@ -65,13 +66,24 @@ RUN --mount=type=cache,id=zeroclaw-cargo-registry,target=/usr/local/cargo/regist
 RUN rm -rf src benches
 
 # 2. Copy only build-relevant source paths (avoid cache-busting on docs/tests/scripts)
+# Stage 1 stubbed every crates/*/src/lib.rs to empty; overwrite with real sources
+# so the root zeroclawlabs package can resolve its re-exports.
 COPY src/ src/
 COPY benches/ benches/
+COPY crates/ crates/
 COPY --from=web-builder /web/dist web/dist
 RUN touch src/main.rs src/lib.rs
 RUN --mount=type=cache,id=zeroclaw-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=zeroclaw-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=zeroclaw-target,target=/app/target,sharing=locked \
+    rm -rf target/release/.fingerprint/zeroclaw* \
+           target/release/.fingerprint/aardvark* \
+           target/release/deps/zeroclaw* \
+           target/release/deps/libzeroclaw* \
+           target/release/deps/aardvark* \
+           target/release/deps/libaardvark* \
+           target/release/incremental/zeroclaw* \
+           target/release/incremental/aardvark* && \
     if [ -n "$ZEROCLAW_CARGO_FEATURES" ]; then \
       cargo build --release --locked --features "$ZEROCLAW_CARGO_FEATURES"; \
     else \
@@ -96,6 +108,7 @@ RUN mkdir -p /zeroclaw-data/.zeroclaw /zeroclaw-data/workspace && \
         'port = 42617' \
         'host = "[::]"' \
         'allow_public_bind = true' \
+        'require_pairing = false' \
         '' \
         '[autonomy]' \
         'level = "supervised"' \
@@ -106,12 +119,21 @@ RUN mkdir -p /zeroclaw-data/.zeroclaw /zeroclaw-data/workspace && \
 # ── Stage 2: Runtime (Debian with shell) ─────────────────────
 FROM debian:bookworm-slim AS runtime
 
-# Install essential tools for agent shell operations
+# Install tools for agent shell operations:
+#   bash, git, curl, wget     — fetch/clone/download
+#   ca-certificates           — TLS verification
+#   procps                    — ps, pgrep, pkill
+#   jq                        — JSON processing
+#   w3m                       — text-mode web browser
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
         curl \
         git \
+        jq \
+        procps \
+        w3m \
+        wget \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/zeroclaw /usr/local/bin/zeroclaw
