@@ -207,10 +207,13 @@ fn current_target_triple() -> &'static str {
 }
 
 fn version_is_newer(current: &str, candidate: &str) -> bool {
-    let parse = |v: &str| -> Vec<u32> { v.split('.').filter_map(|p| p.parse().ok()).collect() };
-    let cur = parse(current);
-    let cand = parse(candidate);
-    cand > cur
+    use semver::Version;
+    match (Version::parse(current), Version::parse(candidate)) {
+        (Ok(c), Ok(n)) => n > c,
+        // Unparseable input is treated as "not newer" — fail closed,
+        // never auto-update on garbage version strings.
+        _ => false,
+    }
 }
 
 async fn download_binary(url: &str, dest: &Path) -> Result<()> {
@@ -452,11 +455,49 @@ mod tests {
 
     #[test]
     fn test_version_comparison() {
+        // Plain semver
         assert!(version_is_newer("0.4.3", "0.5.0"));
         assert!(version_is_newer("0.4.3", "0.4.4"));
         assert!(!version_is_newer("0.5.0", "0.4.3"));
         assert!(!version_is_newer("0.4.3", "0.4.3"));
         assert!(version_is_newer("1.0.0", "2.0.0"));
+    }
+
+    #[test]
+    fn test_version_comparison_la_prerelease_minor_bump() {
+        assert!(version_is_newer("0.7.3-la.1.1", "0.7.3-la.1.2"));
+        assert!(!version_is_newer("0.7.3-la.1.2", "0.7.3-la.1.1"));
+        assert!(!version_is_newer("0.7.3-la.1.5", "0.7.3-la.1.5"));
+    }
+
+    #[test]
+    fn test_version_comparison_la_major_bump() {
+        // MINOR resets to 1 on MAJOR bump; semver still orders correctly
+        // because MAJOR tokens (numeric) are compared numerically before MINOR.
+        assert!(version_is_newer("0.7.3-la.1.50", "0.7.3-la.2.1"));
+        assert!(!version_is_newer("0.7.3-la.2.1", "0.7.3-la.1.50"));
+    }
+
+    #[test]
+    fn test_version_comparison_la_minor_double_digit() {
+        // Numeric identifiers compare numerically (10 > 9), avoiding the
+        // ASCII-lex pitfall that would say "la-10 < la-9".
+        assert!(version_is_newer("0.7.3-la.1.9", "0.7.3-la.1.10"));
+        assert!(!version_is_newer("0.7.3-la.1.10", "0.7.3-la.1.9"));
+    }
+
+    #[test]
+    fn test_version_comparison_upstream_base_advances() {
+        assert!(version_is_newer("0.7.3-la.2.5", "0.7.4-la.1.1"));
+        assert!(!version_is_newer("0.7.4-la.1.1", "0.7.3-la.2.5"));
+    }
+
+    #[test]
+    fn test_version_comparison_invalid_input_does_not_update() {
+        // Garbage input must NOT trigger an update — fail closed.
+        assert!(!version_is_newer("not-a-version", "0.7.3"));
+        assert!(!version_is_newer("0.7.3", "garbage"));
+        assert!(!version_is_newer("", ""));
     }
 
     #[test]
