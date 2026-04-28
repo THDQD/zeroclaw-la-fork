@@ -114,6 +114,12 @@ done
 if ! gh auth status >/dev/null 2>&1; then
     fail "$EX_PRECONDITION" "gh is not authenticated; run 'gh auth login'"
 fi
+if ! gh auth status 2>&1 | grep -q 'write:packages'; then
+    fail "$EX_PRECONDITION" "gh token lacks 'write:packages' scope; run 'gh auth refresh -s write:packages'"
+fi
+if [ -z "$(gh auth token 2>/dev/null || true)" ]; then
+    fail "$EX_PRECONDITION" "gh auth token returned empty; re-run 'gh auth login'"
+fi
 
 # Verify repo-level Actions are disabled (the failsafe that prevents
 # upstream workflows from firing on the fork).
@@ -181,14 +187,23 @@ fi
 # ─── Phase 3: Bump version in repo ──────────────────────────────────────
 phase 3 13 "bump version in repo"
 
+PHASE3_COMMITTED=0
 if [ "$DRY_RUN" -eq 1 ]; then
-    log "(dry-run) would: sed Cargo.toml; cargo check --workspace --locked; git commit"
+    log "(dry-run) would: sed Cargo.toml; cargo check --workspace --exclude zeroclaw-desktop; git commit"
 else
-    sed -i "s/version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/g" Cargo.toml
-    cargo check --workspace --exclude zeroclaw-desktop 2>&1 | tail -5 >&2 || \
-        fail "$EX_CARGO_TEST" "cargo check failed after version bump"
-    git add Cargo.toml Cargo.lock
-    git commit -m "chore(release): $NEW_TAG"
+    # Idempotent skip: Cargo.toml may already be at $NEW_VERSION on rerun
+    # after a partial failure in a later phase.
+    EXISTING_VERSION=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -1)
+    if [ "$EXISTING_VERSION" = "$NEW_VERSION" ]; then
+        log "Cargo.toml already at $NEW_VERSION; skipping bump commit (rerun)"
+    else
+        sed -i "s/version = \"${CURRENT_VERSION}\"/version = \"${NEW_VERSION}\"/g" Cargo.toml
+        cargo check --workspace --exclude zeroclaw-desktop 2>&1 | tail -5 >&2 || \
+            fail "$EX_CARGO_TEST" "cargo check failed after version bump"
+        git add Cargo.toml Cargo.lock
+        git commit -m "chore(release): $NEW_TAG"
+        PHASE3_COMMITTED=1
+    fi
 fi
 
 # ─── Phase 4: Run tests in pinned builder image ─────────────────────────
@@ -209,8 +224,13 @@ else
                 && cargo test --release --locked --test component \
                 && cargo test --release --locked --test integration \
                 && cargo test --release --locked --test system' 2>&1 | tail -30 >&2; then
-        log "tests failed; rolling back version bump"
-        git reset --hard HEAD^
+        log "tests failed"
+        if [ "${PHASE3_COMMITTED:-0}" -eq 1 ]; then
+            log "rolling back version-bump commit"
+            git reset --hard HEAD^
+        else
+            log "no version-bump commit to roll back (was idempotent skip)"
+        fi
         emit_status "cargo_test_failed"
         exit "$EX_CARGO_TEST"
     fi
@@ -263,7 +283,7 @@ else
         -v "$PWD:/work" \
         -w /work/web \
         "$BUILDER_IMAGE" \
-        sh -c 'npm ci && npm run build' 2>&1 | tail -10 >&2
+        sh -c 'rm -rf dist && npm ci && npm run build' 2>&1 | tail -10 >&2
 
     if [ ! -d web/dist ]; then
         fail 1 "expected web/dist/ not found after npm run build"
@@ -312,7 +332,7 @@ else
             echo "## Changes since ${PREV_TAG:-fork inception}"
             echo
             git log "$RANGE" --pretty='format:- %s' --no-merges \
-                | grep -iE '^- feat(\(|:)' \
+                | { grep -iE '^- feat(\(|:)' || true; } \
                 | sed 's/ (#[0-9]*)$//' \
                 | sort -uf
             echo
