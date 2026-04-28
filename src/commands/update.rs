@@ -4,10 +4,25 @@ use anyhow::{Context, Result, bail};
 use std::path::Path;
 use tracing::{info, warn};
 
-const GITHUB_RELEASES_LATEST_URL: &str =
-    "https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/latest";
-const GITHUB_RELEASES_TAG_URL: &str =
-    "https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/tags";
+const DEFAULT_UPDATE_REPO: &str = "zeroclaw-labs/zeroclaw";
+
+fn update_repo() -> &'static str {
+    option_env!("ZEROCLAW_UPDATE_REPO").unwrap_or(DEFAULT_UPDATE_REPO)
+}
+
+fn releases_latest_url() -> String {
+    format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        update_repo()
+    )
+}
+
+fn releases_tag_url() -> String {
+    format!(
+        "https://api.github.com/repos/{}/releases/tags",
+        update_repo()
+    )
+}
 
 #[derive(Debug)]
 pub struct UpdateInfo {
@@ -35,9 +50,9 @@ pub async fn check(target_version: Option<&str>) -> Result<UpdateInfo> {
             } else {
                 format!("v{v}")
             };
-            format!("{GITHUB_RELEASES_TAG_URL}/{tag}")
+            format!("{}/{tag}", releases_tag_url())
         }
-        None => GITHUB_RELEASES_LATEST_URL.to_string(),
+        None => releases_latest_url(),
     };
 
     let resp = client
@@ -410,6 +425,30 @@ async fn smoke_test(binary: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_repo_returns_default_when_env_unset() {
+        // option_env! is evaluated at compile time. In `cargo test` runs,
+        // ZEROCLAW_UPDATE_REPO is unset by default, so the helper returns
+        // the upstream default. This guards against accidental hardcoding.
+        assert_eq!(update_repo(), "zeroclaw-labs/zeroclaw");
+    }
+
+    #[test]
+    fn releases_latest_url_uses_update_repo() {
+        let url = releases_latest_url();
+        assert!(url.starts_with("https://api.github.com/repos/"));
+        assert!(url.ends_with("/releases/latest"));
+        assert!(url.contains(update_repo()));
+    }
+
+    #[test]
+    fn releases_tag_url_uses_update_repo() {
+        let url = releases_tag_url();
+        assert!(url.starts_with("https://api.github.com/repos/"));
+        assert!(url.ends_with("/releases/tags"));
+        assert!(url.contains(update_repo()));
+    }
 
     #[test]
     fn test_version_comparison() {
