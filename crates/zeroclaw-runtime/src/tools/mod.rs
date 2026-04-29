@@ -37,6 +37,41 @@ pub mod sop_list;
 pub mod sop_status;
 pub mod verifiable_intent;
 
+const PROVIDER_TOOL_NAME_MAX_CHARS: usize = 128;
+
+pub(crate) fn provider_safe_skill_tool_name(skill_name: &str, tool_name: &str) -> String {
+    let mut name = format!(
+        "{}_{}",
+        provider_safe_tool_name_segment(skill_name),
+        provider_safe_tool_name_segment(tool_name)
+    );
+
+    if name.len() > PROVIDER_TOOL_NAME_MAX_CHARS {
+        name.truncate(PROVIDER_TOOL_NAME_MAX_CHARS);
+    }
+
+    name
+}
+
+fn provider_safe_tool_name_segment(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    if sanitized.is_empty() {
+        "_".to_string()
+    } else {
+        sanitized
+    }
+}
+
 // Tool types from zeroclaw-tools (direct imports, no shims)
 pub use zeroclaw_tools::ask_user::AskUserTool;
 pub use zeroclaw_tools::ask_user::ChannelMapHandle;

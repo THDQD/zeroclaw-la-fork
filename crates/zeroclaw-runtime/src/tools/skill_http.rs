@@ -25,11 +25,11 @@ pub struct SkillHttpTool {
 impl SkillHttpTool {
     /// Create a new skill HTTP tool.
     ///
-    /// The tool name is prefixed with the skill name (`skill_name.tool_name`)
+    /// The tool name is prefixed with the skill name (`skill_name_tool_name`)
     /// to prevent collisions with built-in tools.
     pub fn new(skill_name: &str, tool: &crate::skills::SkillTool) -> Self {
         Self {
-            tool_name: format!("{}.{}", skill_name, tool.name),
+            tool_name: super::provider_safe_skill_tool_name(skill_name, &tool.name),
             tool_description: tool.description.clone(),
             url_template: tool.command.clone(),
             args: tool.args.clone(),
@@ -173,7 +173,26 @@ mod tests {
     #[test]
     fn skill_http_tool_name_is_prefixed() {
         let tool = SkillHttpTool::new("weather_skill", &sample_http_tool());
-        assert_eq!(tool.name(), "weather_skill.get_weather");
+        assert_eq!(tool.name(), "weather_skill_get_weather");
+    }
+
+    #[test]
+    fn skill_http_tool_name_is_provider_safe() {
+        let tool = SkillHttpTool::new("weather.skill", &sample_http_tool());
+        assert_eq!(tool.name(), "weather_skill_get_weather");
+    }
+
+    #[test]
+    fn skill_http_tool_name_is_capped_at_provider_limit() {
+        let long_skill_name = "s".repeat(140);
+        let tool = SkillHttpTool::new(&long_skill_name, &sample_http_tool());
+
+        assert_eq!(tool.name().len(), 128);
+        assert!(
+            tool.name()
+                .chars()
+                .all(|ch| { ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' })
+        );
     }
 
     #[test]
@@ -203,7 +222,7 @@ mod tests {
     fn skill_http_tool_spec_roundtrip() {
         let tool = SkillHttpTool::new("weather_skill", &sample_http_tool());
         let spec = tool.spec();
-        assert_eq!(spec.name, "weather_skill.get_weather");
+        assert_eq!(spec.name, "weather_skill_get_weather");
         assert_eq!(spec.description, "Fetch weather for a city");
         assert_eq!(spec.parameters["type"], "object");
     }

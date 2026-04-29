@@ -2,7 +2,7 @@
 //!
 //! Each `SkillTool` with `kind = "shell"` or `kind = "script"` is converted
 //! into a `SkillShellTool` that implements the `Tool` trait. The tool name is
-//! prefixed with the skill name (e.g. `my_skill.run_lint`) to avoid collisions
+//! prefixed with the skill name (e.g. `my_skill_run_lint`) to avoid collisions
 //! with built-in tools.
 
 use crate::security::SecurityPolicy;
@@ -29,7 +29,7 @@ pub struct SkillShellTool {
 impl SkillShellTool {
     /// Create a new skill shell tool.
     ///
-    /// The tool name is prefixed with the skill name (`skill_name.tool_name`)
+    /// The tool name is prefixed with the skill name (`skill_name_tool_name`)
     /// to prevent collisions with built-in tools.
     pub fn new(
         skill_name: &str,
@@ -37,7 +37,7 @@ impl SkillShellTool {
         security: Arc<SecurityPolicy>,
     ) -> Self {
         Self {
-            tool_name: format!("{}.{}", skill_name, tool.name),
+            tool_name: super::provider_safe_skill_tool_name(skill_name, &tool.name),
             tool_description: tool.description.clone(),
             command_template: tool.command.clone(),
             args: tool.args.clone(),
@@ -237,7 +237,13 @@ mod tests {
     #[test]
     fn skill_shell_tool_name_is_prefixed() {
         let tool = SkillShellTool::new("my_skill", &sample_skill_tool(), test_security());
-        assert_eq!(tool.name(), "my_skill.run_lint");
+        assert_eq!(tool.name(), "my_skill_run_lint");
+    }
+
+    #[test]
+    fn skill_shell_tool_name_is_provider_safe() {
+        let tool = SkillShellTool::new("my.skill", &sample_skill_tool(), test_security());
+        assert_eq!(tool.name(), "my_skill_run_lint");
     }
 
     #[test]
@@ -316,7 +322,7 @@ mod tests {
     fn skill_shell_tool_spec_roundtrip() {
         let tool = SkillShellTool::new("my_skill", &sample_skill_tool(), test_security());
         let spec = tool.spec();
-        assert_eq!(spec.name, "my_skill.run_lint");
+        assert_eq!(spec.name, "my_skill_run_lint");
         assert_eq!(spec.description, "Run the linter on a file");
         assert_eq!(spec.parameters["type"], "object");
     }
