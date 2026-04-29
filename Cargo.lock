@@ -3107,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "fill-translations"
-version = "0.7.3"
+version = "0.7.3-la.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -13069,7 +13069,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.7.3"
+version = "0.7.3-la.1.0"
 dependencies = [
  "anyhow",
  "axum",
