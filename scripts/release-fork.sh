@@ -266,7 +266,9 @@ else
     log "binary --version: $BINARY_VERSION"
 
     # Verify the option_env! propagated by checking the embedded URL.
-    if ! strings "$BINARY_PATH" | grep -qF "$FORK_REPO"; then
+    # `grep -a` treats the binary as text — avoids depending on `strings`
+    # (which is shadowed by firejail on some maintainer hosts).
+    if ! grep -aqF "$FORK_REPO" "$BINARY_PATH"; then
         fail 1 "ZEROCLAW_UPDATE_REPO did not propagate to the binary; aborting"
     fi
     log "verified ZEROCLAW_UPDATE_REPO=$FORK_REPO is embedded in the binary"
