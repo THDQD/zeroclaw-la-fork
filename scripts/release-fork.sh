@@ -27,7 +27,7 @@ BUILDER_IMAGE="zeroclaw-builder:rust1.93"
 TARGET_TRIPLE="x86_64-unknown-linux-gnu"
 
 # Cargo features for fork builds. Adjust as the fork's needs evolve.
-LIFEATLAS_RELEASE_FEATURES="agent-runtime,channel-matrix"
+LIFEATLAS_RELEASE_FEATURES="agent-runtime"
 
 # Flags.
 DRY_RUN=0
